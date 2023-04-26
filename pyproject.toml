@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "exactwrapper"
+version = "0.1.0"
+description = ""
+authors = ["e.wilts <e.wilts@ncim.nl>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.95.1"
+uvicorn = "^0.21.1"
+rich = "^13.3.4"
+ruff = "^0.0.263"
+requests = "^2.28.2"
+python-dotenv = "^1.0.0"
+loguru = "^0.7.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
