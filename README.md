@@ -8,7 +8,7 @@ Used to interact with the ExactOnline API to automate contracts
   - `pip install poetry`
   - `poetry install`
 - Create a `.env` file in the main directory
-  - See Settings in config.py for the necessary variables
+  - See `config.py` for the necessary variables
 - Run the app:
   - `python src/main.py`
 

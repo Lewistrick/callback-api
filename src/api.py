@@ -1,9 +1,10 @@
-import os
-from urllib.parse import quote_plus
+from urllib.parse import parse_qs
 
 import requests
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.exceptions import HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
+from loguru import logger
 
 from src.config import settings
 
@@ -11,7 +12,7 @@ router = APIRouter(prefix="/api", tags=["API"])
 
 
 @router.get("/")
-def home(req: Request):
+async def home(req: Request):
     return {
         "message": "go to one of these URLs:",
         "URLs": [router.url_path_for(endpoint) for endpoint in ("contact", "privacy")],
@@ -19,17 +20,17 @@ def home(req: Request):
 
 
 @router.get("/callback")
-def callback(req: Request):
+async def callback(req: Request):
     return JSONResponse(dict(req.query_params))
 
 
 @router.get("/contact")
-def contact(req: Request):
+async def contact(req: Request):
     return {"developer": "e.wilts@ncim.nl"}
 
 
 @router.get("/privacy")
-def privacy(req: Request):
+async def privacy(req: Request):
     return JSONResponse(
         {
             "data collected": "none",
@@ -41,26 +42,33 @@ def privacy(req: Request):
     )
 
 
-@router.get("/testauth")
-def testauth(req: Request):
-    authurl = os.getenv("EXACT_APIURL") + "/oauth2/auth"
-    params = {
-        "client_id": settings.exact_client_id,
-        "redirect_uri": router.url_path_for("callback"),
-        "response_type": "token",
-        "force_login": "1",
-    }
+@router.get("/auth")
+async def auth(req: Request):
+    logger.debug(f"Trying to authenticate on {settings.exact_authurl}")
+    resp = requests.get(
+        settings.exact_authurl,
+        params={
+            "client_id": settings.exact_client_id,
+            "redirect_uri": router.url_path_for("callback"),
+            "response_type": "code",
+            "force_login": "0",
+        },
+    )
+    if not resp.ok:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
-    req_url = authurl + "?"
-    for k, v in params.items():
-        print(f"quoting {v}")
-        qv = quote_plus(v)
-        print(f"result: {qv}")
-        req_url += f"{k}={qv}&"
+    logger.debug(f"Response:\n{resp.text}")
 
-    req_url = req_url[:-1]  # remove the last ampersand
-    print(req_url)
+    return HTMLResponse(resp.content)
 
-    resp = requests.get(req_url)
-    print(resp.text)
-    return resp.text
+
+@router.post("/auth")
+async def post_auth(req: Request):
+    result: bytes = await req.body()
+    params = parse_qs(result)
+
+    # params is a {bytes: list[bytes]} mapping with two elements
+    # - a user (the username specified)
+    # - a verification token
+
+    return params

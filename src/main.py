@@ -15,4 +15,5 @@ if __name__ == "__main__":
         "src.main:app",
         host=settings.internal_url,
         port=settings.internal_port,
+        reload=True,
     )
