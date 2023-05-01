@@ -14,5 +14,8 @@ class Settings(BaseSettings):
     exact_webhook_secret: str
     exact_client_secret: str
 
+    class Config:
+        env_file = ".env"
+
 
 settings = Settings()
