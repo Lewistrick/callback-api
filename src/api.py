@@ -5,6 +5,8 @@ import requests
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from src.config import settings
+
 router = APIRouter(prefix="/api", tags=["API"])
 
 
@@ -43,7 +45,7 @@ def privacy(req: Request):
 def testauth(req: Request):
     authurl = os.getenv("EXACT_APIURL") + "/oauth2/auth"
     params = {
-        "client_id": os.getenv("EXACT_CLIENT_ID"),
+        "client_id": settings.exact_client_id,
         "redirect_uri": router.url_path_for("callback"),
         "response_type": "token",
         "force_login": "1",
