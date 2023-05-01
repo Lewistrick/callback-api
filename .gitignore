@@ -165,3 +165,5 @@ __pycache__
 notes.md
 localhost.*
 OAUTH*.json
+.vscode/settings.json
+.nginx

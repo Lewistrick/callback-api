@@ -1,38 +1,32 @@
 import os
 from urllib.parse import quote_plus
 
-import fastapi
 import requests
-import uvicorn
-from dotenv import load_dotenv
-from fastapi.requests import Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-from loguru import logger
 
-app = fastapi.FastAPI()
-
-load_dotenv()
+router = APIRouter(prefix="/api", tags=["API"])
 
 
-@app.get("/")
+@router.get("/")
 def home(req: Request):
-    return {"message": "go to /contact or /privacy to read more"}
+    return {
+        "message": "go to one of these URLs:",
+        "URLs": [router.url_path_for(endpoint) for endpoint in ("contact", "privacy")],
+    }
 
 
-@app.get("/callback")
+@router.get("/callback")
 def callback(req: Request):
     return JSONResponse(dict(req.query_params))
 
 
-@app.get("/contact")
+@router.get("/contact")
 def contact(req: Request):
-    return {
-        "contact": "s.coufreur@ncim.nl",
-        "developer": "e.wilts@ncim.nl",
-    }
+    return {"developer": "e.wilts@ncim.nl"}
 
 
-@app.get("/privacy")
+@router.get("/privacy")
 def privacy(req: Request):
     return JSONResponse(
         {
@@ -45,12 +39,12 @@ def privacy(req: Request):
     )
 
 
-@app.get("/testauth")
+@router.get("/testauth")
 def testauth(req: Request):
     authurl = os.getenv("EXACT_APIURL") + "/oauth2/auth"
     params = {
         "client_id": os.getenv("EXACT_CLIENT_ID"),
-        "redirect_uri": "https://localhost/callback",
+        "redirect_uri": router.url_path_for("callback"),
         "response_type": "token",
         "force_login": "1",
     }
@@ -68,15 +62,3 @@ def testauth(req: Request):
     resp = requests.get(req_url)
     print(resp.text)
     return resp.text
-
-
-if __name__ == "__main__":
-    logger.debug(f"Environment: {os.environ}")
-    uvicorn.run(
-        "main:app",
-        host="localhost",
-        port=8000,
-        ssl_keyfile=os.getenv("SSL_KEYFILE"),
-        ssl_certfile=os.getenv("SSL_CERTFILE"),
-        reload=True,
-    )
