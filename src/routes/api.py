@@ -10,6 +10,9 @@ from src.config import settings
 
 router = APIRouter(prefix="/api", tags=["API"])
 
+# Global variable to store the username and password (token)
+EXACT_AUTH = ("", "")
+
 
 @router.get("/")
 async def home(req: Request):
@@ -57,18 +60,24 @@ async def auth(req: Request):
     if not resp.ok:
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
-    logger.debug(f"Response:\n{resp.text}")
-
+    # Show the HTML with the login form; this does a POST request to this function
     return HTMLResponse(resp.content)
 
 
 @router.post("/auth")
-async def post_auth(req: Request):
+async def auth_post(req: Request):
     result: bytes = await req.body()
-    params = parse_qs(result)
+    logger.info(result.decode())
+    params = parse_qs(result.decode())
 
-    # params is a {bytes: list[bytes]} mapping with two elements
-    # - a user (the username specified)
-    # - a verification token
+    # params is a {str: list[str]} mapping with two elements
+    # - 'UserNameField' (the username/email specified)
+    # - '__RequestVerificationToken' (the Exact auth token)
+    # both of these have length 1
 
-    return params
+    username = params["UserNameField"][0]
+    password = params["__RequestVerificationToken"][0]
+
+    global EXACT_AUTH
+    EXACT_AUTH = (username, password)
+    return EXACT_AUTH
