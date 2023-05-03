@@ -1,17 +1,17 @@
-from urllib.parse import parse_qs
+from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
 import requests
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, FastAPI, Request, Response, status
 from fastapi.exceptions import HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from loguru import logger
 
 from src.config import settings
+from src.exact_oauth import expected_oauth_response_keys
 
 router = APIRouter(prefix="/api", tags=["API"])
-
-# Global variable to store the username and password (token)
-EXACT_AUTH = ("", "")
+creds = {}  # store credentials here
 
 
 @router.get("/")
@@ -22,9 +22,65 @@ async def home(req: Request):
     }
 
 
+@router.get("/auth")
+async def authorize(req: Request):
+    params = {
+        "client_id": settings.exact_client_id,
+        "redirect_uri": settings.exact_redirect_url,
+        "response_type": "code",
+        "force_login": "0",
+    }
+
+    app: FastAPI = req.app
+    app_state = req.query_params.get("state")
+    if app_state:
+        app.state._state["app_state"] = app_state
+    else:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            details="param 'state' not given",
+        )
+
+    for k, v in req.query_params.items():
+        if k not in params:
+            params[k] = v
+
+    auth_url = f"{settings.exact_authurl}?{urlencode(params)}"
+    logger.debug(f"Redirecting to Exact for auth: {settings.exact_authurl}")
+    logger.debug(f"Exact auth URL params: {params}")
+    return RedirectResponse(url=auth_url)
+
+
 @router.get("/callback")
-async def callback(req: Request):
-    return JSONResponse(dict(req.query_params))
+async def callback(resp: Response, req: Request):
+    req_state = req.query_params.get("state")
+    app: FastAPI = req.app
+    app_state = app.state._state.get("app_state")
+
+    if not app_state:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "App is stateless!",
+        )
+
+    if not req_state:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Request has no state!",
+        )
+
+    if req_state != app_state:
+        logger.warning(f"Wrong request state: {req_state}")
+        logger.warning(f"{app_state=}")
+        breakpoint()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Couldn't verify app state!",
+        )
+
+    code = req.query_params.get("code")
+    resp.set_cookie(key="exact_auth_code", value=code)
+    return {"message": "exact_auth_code set in cookie"}
 
 
 @router.get("/contact")
@@ -45,39 +101,67 @@ async def privacy(req: Request):
     )
 
 
-@router.get("/auth")
-async def auth(req: Request):
-    logger.debug(f"Trying to authenticate on {settings.exact_authurl}")
-    resp = requests.get(
-        settings.exact_authurl,
-        params={
-            "client_id": settings.exact_client_id,
-            "redirect_uri": router.url_path_for("callback"),
-            "response_type": "code",
-            "force_login": "0",
-        },
-    )
-    if not resp.ok:
-        raise HTTPException(status_code=resp.status_code, detail=resp.text)
-
-    # Show the HTML with the login form; this does a POST request to this function
-    return HTMLResponse(resp.content)
+@router.get("/test")
+async def test(req: Request):
+    logger.info("Got here!")
+    response_dict = dict(req.query_params)
+    logger.debug(f"Got response! {response_dict}")
+    return JSONResponse(response_dict)
 
 
-@router.post("/auth")
-async def auth_post(req: Request):
-    result: bytes = await req.body()
-    logger.info(result.decode())
-    params = parse_qs(result.decode())
+@router.post("/token")
+async def token(req: Request, resp: Response):
+    # Check if a non-expired access token exists
+    access_token = req.cookies.get("exact_access_token")
+    token_expiry = req.cookies.get("exact_token_expiry", 0)
+    if access_token and float(token_expiry) > datetime.utcnow().timestamp():
+        return JSONResponse(content={"token": access_token})
 
-    # params is a {str: list[str]} mapping with two elements
-    # - 'UserNameField' (the username/email specified)
-    # - '__RequestVerificationToken' (the Exact auth token)
-    # both of these have length 1
+    # Prepare data for requesting an access token
+    data = {
+        "client_id": settings.exact_client_id,
+        "client_secret": settings.exact_client_secret,
+        "redirect_uri": settings.exact_redirect_url,
+    }
 
-    username = params["UserNameField"][0]
-    password = params["__RequestVerificationToken"][0]
+    # If an access token exists and is expired, request a new token
+    if access_token and (refresh_token := req.cookies.get("exact_refresh_token")):
+        data["code"] = refresh_token
+        data["grant_type"] = "refresh_token"
 
-    global EXACT_AUTH
-    EXACT_AUTH = (username, password)
-    return EXACT_AUTH
+    # Otherwise, this is the first time a token will be requested
+    else:
+        data["code"] = req.cookies.get("exact_auth_code")
+        data["grant_type"] = "authorization_code"
+
+    exact_resp = requests.post(settings.exact_tokenurl, data=data)
+
+    if not exact_resp.ok:
+        scode = exact_resp.status_code
+        etext = exact_resp.text
+        logger.error(f"Could not request OAuth2 token: ({scode} - {etext})")
+        raise HTTPException(
+            status_code=scode,
+            detail=f"Could not request OAuth2 token: {etext}",
+        )
+
+    new_data: dict[str, str] = exact_resp.json()
+    if any(k not in new_data for k in expected_oauth_response_keys):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Unexpected response from Exact!"
+                f"\n - Expected keys: {expected_oauth_response_keys}"
+                f"\n - Received keys: {set(new_data.keys())}"
+            ),
+        )
+
+    # Set the cookies to the values from the response
+    access_token = new_data.get("access_token")
+    expires_in = float(new_data.get("expires_in", 0))
+    expiry = (datetime.utcnow() + timedelta(seconds=expires_in)).timestamp()
+    resp.set_cookie(key="exact_access_token", value=access_token)
+    resp.set_cookie(key="exact_token_expiry", value=expiry)
+    resp.set_cookie(kye="exact_refresh_token", value=new_data.get("refresh_token"))
+
+    return JSONResponse(content={"token": access_token})
