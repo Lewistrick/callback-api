@@ -1,26 +1,21 @@
 import requests
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
-from rich import inspect
 
 from src.config import settings
-from src.routes import api
+from src.routes.api import get_token_dict
 
 router = APIRouter(prefix="/api/exact", tags=["Exact endpoints"])
 
 
-@router.get("/projects")
-async def get_projects(creds: tuple[str, str] = Header(None)):
-    if all(api.EXACT_AUTH):
-        creds = api.EXACT_AUTH
-    elif not creds:
-        raise HTTPException(
-            status_code=400,
-            detail="Token niet gevonden. Zet in de header of doe GET /api/auth",
-        )
+@router.get("/division")
+async def division(token: str = Depends(get_token_dict)):
+    div_url = settings.exact_apiurl + "/Me?$select=CurrentDivision"
+    headers = {"authorization": f"Bearer {token}"}
 
-    _, token = creds
-    headers = {"Authorization": f"Bearer {token}"}
-    resp = requests.get(settings.exact_apiurl + "/projects", headers=headers)
-    inspect(resp)
+    resp = requests.get(div_url, headers=headers)
+
+    if not resp.ok:
+        raise HTTPException(status_code=resp.status_code, detail=resp.content)
+
     return resp.json()
